@@ -1,16 +1,19 @@
 ﻿using Digi;
 using Digi.NetworkLib;
 using ModularEncountersSystems.API;
+using PEPCO.Utilities;
 using Sandbox.Game;
 using Sandbox.ModAPI;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Xml.Serialization;
+using VRage.Game;
 using VRage.Game.Components;
 using VRage.Game.ModAPI;
 using VRage.Utils;
 using VRageMath;
+using static PEPCO.ScriptHelpers;
 
 namespace PEPCO
 {
@@ -21,13 +24,9 @@ namespace PEPCO
 
         public static MESApi SpawnerAPI;
 
-        // Toggle for logging; set to false in release builds
-        public bool _debug = false;
-
         // All loaded interactions from all mods that provide a config
-        public readonly List<MesInteraction> Interactions = new List<MesInteraction>();
+        public readonly Dictionary<string, MesInteraction> Interactions = new Dictionary<string, MesInteraction>();
 
-        public static readonly string version = "1755283354";
 
         public const ushort NetworkId = (ushort)(3547952468 % ushort.MaxValue); // Using the prod steam id
 
@@ -39,10 +38,14 @@ namespace PEPCO
 
         public override void LoadData()
         {
-            _debug = ModContext.ModName.EndsWith("- DEV");
-            Log.Info($"Is DEV mod: {_debug}\nVersion: {version}");
 
             Instance = this;
+
+        }
+
+        public override void Init(MyObjectBuilder_SessionComponent sessionComponent)
+        {
+            
             SpawnerAPI = new MESApi();
             CollectConfig();
 
@@ -50,9 +53,6 @@ namespace PEPCO
             //Net.SerializeTest = true;
             MESInteractionsPacket = new MESInteractions_NetworkPackage();
             MESInteractions_NetworkPackage.OnReceive += MESInteractions_OnReceive;
-
-
-            
         }
 
         protected override void UnloadData()
@@ -63,25 +63,24 @@ namespace PEPCO
             MESInteractions_NetworkPackage.OnReceive -= MESInteractions_OnReceive;
         }
 
-        public void HandleMESInteraction(string index, IMyRadioAntenna antenna)
+        public void HandleMESInteraction(string interactionId, IMyRadioAntenna antenna)
         {
             try
             {
 
-                int callIndex = -1;
-                if (!int.TryParse(index, out callIndex) || callIndex < 0 || callIndex >= Interactions.Count) // Check if the index is valid
+                if (string.IsNullOrWhiteSpace(interactionId)) // Check if the index is valid
                 {
-                    Log.Error("Error: Invalid interaction index.");
+                    LogError($"Error: Invalid interaction index. value: {interactionId}");
                     return;
                 }
 
                 if (antenna.Enabled == false || antenna.EnableBroadcasting == false || antenna.OwnerId == 0) return; // No owner, do nothing, no broadcasting, no interaction
 
-                var modInteraction = Interactions[callIndex];
+                var modInteraction = Interactions[interactionId];
 
                 if (modInteraction == null) // Check if the interaction exists
                 {
-                    Log.Error("Error: No interaction found for index: {index}");
+                    LogError($"Error: No interaction found for index: {interactionId}");
                     return;
                 }
 
@@ -108,20 +107,16 @@ namespace PEPCO
                 MESInteractionsPacket.Setup(commandProfileIds, antennaPosition, antennaRadius, antennaOwner, playerName, callString);
                 Net.SendToServer(MESInteractionsPacket);
 
-                if (_debug)
-                {
-                    Log.Info($"Sending MESInteractions packet with commandProfileIds: {commandProfileIds}\n" +
+                LogDebug($"Sending MESInteractions packet with commandProfileIds: {string.Join(";", commandProfileIds)}\n" +
                         $"Antenna position: {antennaPosition}\n" +
                         $"Antenna radius: {antennaRadius}\n" +
                         $"Antenna owner: {antennaOwner}\n" +
                         $"Sender name: {playerName}\n" +
                         $"Radio call: {callString}");
-
-                }
             }
             catch (Exception ex)
             {
-                Log.Error($"Error: An error occurred while trying to call: {ex.Message}");
+                LogError($"Error: An error occurred while trying to call: {ex.Message}");
             }
 
         }
@@ -129,38 +124,38 @@ namespace PEPCO
 
         void MESInteractions_OnReceive(MESInteractions_NetworkPackage packet, ref PacketInfo packetInfo, ulong senderSteamId)
         {
-            if (_debug) Log.Info($"Received MESInteractions packet");
+            LogDebug($"Received MESInteractions packet");
 
             if (SpawnerAPI == null) // Check if the API is ready
             {
-                Log.Error($"MES API is null. Server: {MyAPIGateway.Multiplayer.IsServer}.");
+                LogError($"MES API is null. Server: {MyAPIGateway.Multiplayer.IsServer}.");
                 return;
             }
             if (MyAPIGateway.Multiplayer.IsServer && !SpawnerAPI.MESApiReady) // Check if the API is ready on the server
             {
-                Log.Error($"MES API is not ready. Server: {MyAPIGateway.Multiplayer.IsServer}. Please try again later.");
+                LogError($"MES API is not ready. Server: {MyAPIGateway.Multiplayer.IsServer}. Please try again later.");
                 return;
             }
 
             if (packet == null)
             {
-                Log.Error("Received an invalid MESInteractions packet.");
+                LogError("Received an invalid MESInteractions packet.");
                 return;
             }
 
-            
+
             var player = MyAPIGateway.Session.Player;
-            if (_debug) Log.Info($"Is player null? {player == null}");
+            LogDebug($"Is player null? {player == null}");
             bool playerInRange = false;
             if (player != null)
             {
                 playerInRange = IsPlayerInRange(player, packet.Position, packet.AntennaRange);
-                if (_debug) Log.Info($"Player {player.DisplayName} is in range: {playerInRange}");
+                LogDebug($"Player {player.DisplayName} is in range: {playerInRange}");
             }
 
             bool radioCallEmpty = string.IsNullOrWhiteSpace(packet.RadioCall);
 
-            if (_debug) Log.Info($"Radio call empty: {radioCallEmpty}");
+            LogDebug($"Radio call empty: {radioCallEmpty}");
 
             if (playerInRange && !radioCallEmpty) // Ignore empty radio calls and show only to players within range
             {
@@ -169,7 +164,7 @@ namespace PEPCO
             }
 
             // Do this only on servers
-            if (_debug) Log.Info($"Is server? {MyAPIGateway.Multiplayer.IsServer}");
+            LogDebug($"Is server? {MyAPIGateway.Multiplayer.IsServer}");
             if (MyAPIGateway.Multiplayer.IsServer)
             {
                 SpawnerAPI.SendBehaviorCommand(packet.CommandProfileIds, packet.Position, "", packet.AntennaRange, packet.AntennaOwnerID);
@@ -177,7 +172,7 @@ namespace PEPCO
 
             packetInfo.Relay = RelayMode.ToEveryone;
 
-            if (_debug) Log.Info($"Received MESInteractions packet from {packet.SenderName} with call: {packet.RadioCall} at position {packet.Position} and range {packet.AntennaRange}");
+            LogDebug($"Received MESInteractions packet from {packet.SenderName} with call: {packet.RadioCall} at position {packet.Position} and range {packet.AntennaRange}");
 
         }
 
@@ -198,11 +193,11 @@ namespace PEPCO
 
         private void CollectConfig()
         {
-            if (_debug) Log.Info("Collecting MESInteractions configuration settings...");
+            LogDefault("Collecting MESInteractions configuration settings...");
 
             if (MyAPIGateway.Session?.Mods == null)
             {
-                if (_debug) Log.Info("No mods list available.");
+                LogDebug("No mods list available.");
                 return;
             }
 
@@ -215,12 +210,11 @@ namespace PEPCO
                 {
                     if (!MyAPIGateway.Utilities.FileExistsInModLocation(mod.GetPath() + relativePath, mod))
                     {
-                        if (_debug) Log.Info($"No config in mod: {mod.Name}");
+                        LogDebug($"No config in mod: {mod.Name}");
                         continue;
                     }
 
-                    if (_debug) Log.Info($"Config file found in mod: {mod.Name} at {mod.GetPath() + relativePath}");
-
+                    LogDebug($"Config file found in mod: {mod.Name} at {mod.GetPath() + relativePath}");
                     using (var reader = MyAPIGateway.Utilities.ReadFileInModLocation(mod.GetPath() + relativePath, mod))
                     {
                         var xml = reader.ReadToEnd();
@@ -238,42 +232,57 @@ namespace PEPCO
                                 {
                                     validItems.Add(interaction);
                                 }
-                                else if (_debug)
+                                else
                                 {
-                                    Log.Info($"Rejected invalid interaction in mod {mod.Name}: missing required fields.");
+                                    LogDebug($"Rejected invalid interaction in mod {mod.Name}: missing required fields.");
                                 }
                             }
 
                             if (validItems.Count > 0)
                             {
-                                Interactions.AddRange(validItems);
+                                foreach (var item in validItems)
+                                {
+                                    if (!Interactions.ContainsKey(item.MESInteractionId))
+                                    {
+                                        Interactions[item.MESInteractionId] = item;
+                                    }
+                                    else
+                                    {
+                                        Interactions[item.MESInteractionId] = item; // Overwrite existing entry
+                                        Log.Info($"Duplicate MESInteractionId found: {item.MESInteractionId} in mod {mod.Name}. Overwriting duplicate.");
+                                    }
+                                }
                                 totalLoaded += validItems.Count;
-                                if (_debug) Log.Info($"Loaded {validItems.Count} valid interaction(s) from: {mod.Name}");
+                                LogDebug($"Loaded {validItems.Count} valid interaction(s) from: {mod.Name}");
                             }
                             else
                             {
-                                if (_debug) Log.Info($"No valid interactions found in config: {mod.Name}");
+                                LogDebug($"No valid interactions found in config: {mod.Name}");
                             }
                         }
                         else
                         {
-                            if (_debug) Log.Info($"Config in {mod.Name} contained no interactions.");
+                            LogDebug($"Config in {mod.Name} contained no interactions.");
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    Log.Error($"Error loading config from mod {mod.Name}: {ex.Message}");
+                    LogError($"Error loading config from mod {mod.Name}: {ex.Message}");
                 }
             }
 
-            if (_debug) Log.Info($"Total MESInteractions loaded: {totalLoaded}");
+            LogDefault($"Total MESInteractions loaded: {totalLoaded}");
         }
 
         // Cleanup/normalization to avoid whitespace/dupes
         private void Normalize(MesInteraction interaction)
         {
             if (interaction == null) return;
+
+            if (!string.IsNullOrEmpty(interaction.MESInteractionId))
+                interaction.MESInteractionId = interaction.MESInteractionId.Trim();
+
 
             if (interaction.CommandProfileIds != null)
             {
@@ -304,17 +313,16 @@ namespace PEPCO
         {
             if (interaction == null) return false;
 
+            bool hasIdField = !string.IsNullOrWhiteSpace(interaction.MESInteractionId);
             bool hasIds = interaction.CommandProfileIds != null &&
                           interaction.CommandProfileIds.Any(id => !string.IsNullOrWhiteSpace(id));
 
-            //bool hasCalls = interaction.RadioCalls != null &&
-            //                interaction.RadioCalls.Any(rc => !string.IsNullOrWhiteSpace(rc));
-
-            return hasIds
+            return hasIdField
+                && hasIds
                 && !string.IsNullOrWhiteSpace(interaction.AntennaCall)
                 && !string.IsNullOrWhiteSpace(interaction.AntennaCallTooltip);
-                //&& hasCalls;
         }
+
 
         // Optional helpers
 
@@ -322,12 +330,9 @@ namespace PEPCO
         {
             if (string.IsNullOrWhiteSpace(id)) return null;
 
-            return Interactions.FirstOrDefault(i =>
-                i.CommandProfileIds != null &&
-                i.CommandProfileIds.Any(cid => string.Equals(cid, id, StringComparison.OrdinalIgnoreCase)));
+            return Interactions[id];
         }
 
-        public IEnumerable<MesInteraction> GetAll() => Interactions;
 
         // XML models
 
@@ -340,6 +345,9 @@ namespace PEPCO
 
         public class MesInteraction
         {
+            [XmlElement("MESInteractionId")]
+            public string MESInteractionId { get; set; }   // NEW: maps <MESInteractionId>
+
             [XmlArray("CommandProfileIds")]
             [XmlArrayItem("CommandProfileId")]
             public List<string> CommandProfileIds { get; set; } = new List<string>();
@@ -354,5 +362,6 @@ namespace PEPCO
             [XmlArrayItem("RadioCall")]
             public List<string> RadioCalls { get; set; } = new List<string>();
         }
+
     }
 }
