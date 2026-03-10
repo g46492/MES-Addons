@@ -25,9 +25,9 @@ namespace PEPCO
         public bool _debug = false;
 
         // All loaded interactions from all mods that provide a config
-        public readonly Dictionary<string, MesInteraction> Interactions = new Dictionary<string, MesInteraction>();
+        public readonly List<MesInteraction> Interactions = new List<MesInteraction>();
 
-        public static readonly string version = "1755625324";
+        public static readonly string version = "1755283354";
 
         public const ushort NetworkId = (ushort)(3547952468 % ushort.MaxValue); // Using the prod steam id
 
@@ -52,7 +52,7 @@ namespace PEPCO
             MESInteractions_NetworkPackage.OnReceive += MESInteractions_OnReceive;
 
 
-
+            
         }
 
         protected override void UnloadData()
@@ -63,24 +63,25 @@ namespace PEPCO
             MESInteractions_NetworkPackage.OnReceive -= MESInteractions_OnReceive;
         }
 
-        public void HandleMESInteraction(string interactionId, IMyRadioAntenna antenna)
+        public void HandleMESInteraction(string index, IMyRadioAntenna antenna)
         {
             try
             {
 
-                if (string.IsNullOrWhiteSpace(interactionId)) // Check if the index is valid
+                int callIndex = -1;
+                if (!int.TryParse(index, out callIndex) || callIndex < 0 || callIndex >= Interactions.Count) // Check if the index is valid
                 {
-                    Log.Error($"Error: Invalid interaction index. value: {interactionId}");
+                    Log.Error("Error: Invalid interaction index.");
                     return;
                 }
 
                 if (antenna.Enabled == false || antenna.EnableBroadcasting == false || antenna.OwnerId == 0) return; // No owner, do nothing, no broadcasting, no interaction
 
-                var modInteraction = Interactions[interactionId];
+                var modInteraction = Interactions[callIndex];
 
                 if (modInteraction == null) // Check if the interaction exists
                 {
-                    Log.Error($"Error: No interaction found for index: {interactionId}");
+                    Log.Error("Error: No interaction found for index: {index}");
                     return;
                 }
 
@@ -109,7 +110,7 @@ namespace PEPCO
 
                 if (_debug)
                 {
-                    Log.Info($"Sending MESInteractions packet with commandProfileIds: {string.Join(";", commandProfileIds)}\n" +
+                    Log.Info($"Sending MESInteractions packet with commandProfileIds: {commandProfileIds}\n" +
                         $"Antenna position: {antennaPosition}\n" +
                         $"Antenna radius: {antennaRadius}\n" +
                         $"Antenna owner: {antennaOwner}\n" +
@@ -147,7 +148,7 @@ namespace PEPCO
                 return;
             }
 
-
+            
             var player = MyAPIGateway.Session.Player;
             if (_debug) Log.Info($"Is player null? {player == null}");
             bool playerInRange = false;
@@ -245,18 +246,7 @@ namespace PEPCO
 
                             if (validItems.Count > 0)
                             {
-                                foreach (var item in validItems)
-                                {
-                                    if (!Interactions.ContainsKey(item.MESInteractionId))
-                                    {
-                                        Interactions[item.MESInteractionId] = item;
-                                    }
-                                    else
-                                    {
-                                        Interactions[item.MESInteractionId] = item; // Overwrite existing entry
-                                        Log.Info($"Duplicate MESInteractionId found: {item.MESInteractionId} in mod {mod.Name}. Overwriting duplicate.");
-                                    }
-                                }
+                                Interactions.AddRange(validItems);
                                 totalLoaded += validItems.Count;
                                 if (_debug) Log.Info($"Loaded {validItems.Count} valid interaction(s) from: {mod.Name}");
                             }
@@ -284,10 +274,6 @@ namespace PEPCO
         private void Normalize(MesInteraction interaction)
         {
             if (interaction == null) return;
-
-            if (!string.IsNullOrEmpty(interaction.MESInteractionId))
-                interaction.MESInteractionId = interaction.MESInteractionId.Trim();
-
 
             if (interaction.CommandProfileIds != null)
             {
@@ -318,16 +304,17 @@ namespace PEPCO
         {
             if (interaction == null) return false;
 
-            bool hasIdField = !string.IsNullOrWhiteSpace(interaction.MESInteractionId);
             bool hasIds = interaction.CommandProfileIds != null &&
                           interaction.CommandProfileIds.Any(id => !string.IsNullOrWhiteSpace(id));
 
-            return hasIdField
-                && hasIds
+            //bool hasCalls = interaction.RadioCalls != null &&
+            //                interaction.RadioCalls.Any(rc => !string.IsNullOrWhiteSpace(rc));
+
+            return hasIds
                 && !string.IsNullOrWhiteSpace(interaction.AntennaCall)
                 && !string.IsNullOrWhiteSpace(interaction.AntennaCallTooltip);
+                //&& hasCalls;
         }
-
 
         // Optional helpers
 
@@ -335,9 +322,12 @@ namespace PEPCO
         {
             if (string.IsNullOrWhiteSpace(id)) return null;
 
-            return Interactions[id];
+            return Interactions.FirstOrDefault(i =>
+                i.CommandProfileIds != null &&
+                i.CommandProfileIds.Any(cid => string.Equals(cid, id, StringComparison.OrdinalIgnoreCase)));
         }
 
+        public IEnumerable<MesInteraction> GetAll() => Interactions;
 
         // XML models
 
@@ -350,9 +340,6 @@ namespace PEPCO
 
         public class MesInteraction
         {
-            [XmlElement("MESInteractionId")]
-            public string MESInteractionId { get; set; }   // NEW: maps <MESInteractionId>
-
             [XmlArray("CommandProfileIds")]
             [XmlArrayItem("CommandProfileId")]
             public List<string> CommandProfileIds { get; set; } = new List<string>();
@@ -367,6 +354,5 @@ namespace PEPCO
             [XmlArrayItem("RadioCall")]
             public List<string> RadioCalls { get; set; } = new List<string>();
         }
-
     }
 }

@@ -28,7 +28,7 @@ namespace PEPCO
 
         private static readonly Dictionary<long, MyTerminalControlListBoxItem> _comboSelection = new Dictionary<long, MyTerminalControlListBoxItem>();
 
-        public static void DoOnce(IMyModContext context, Dictionary<string,MesInteraction> Interactions)
+        public static void DoOnce(IMyModContext context, List<MesInteraction> Interactions)
         {
             if (Done)
                 return;
@@ -72,46 +72,36 @@ namespace PEPCO
 
                 c.VisibleRowsCount = 3;
                 c.Multiselect = false; // don't get greedy, this is a listbox, not a multiselect listbox
-                                       // Assuming Interactions is now:
-
                 c.ListContent = (b, content, preSelect) =>
                 {
                     var logic = b.GameLogic.GetAs<MESAntenna_Logic>();
+
                     if (logic == null)
                         return; // no gamelogic, no options
-
                     var interactions = logic.Mod.Interactions;
-
-                    foreach (var kvp in interactions) // kvp.Key = MESInteractionId, kvp.Value = MESInteraction
+                    for (int i = 0; i < interactions.Count; i++)
                     {
-                        var interaction = kvp.Value;
-
-                        var item = new MyTerminalControlListBoxItem(
-                            MyStringId.GetOrCompute($"{interaction.AntennaCall}"),
-                            tooltip: MyStringId.GetOrCompute($"{interaction.AntennaCallTooltip}"),
-                            userData: kvp.Key // MESInteractionId as UserData
-                        );
+                        var item = new MyTerminalControlListBoxItem(MyStringId.GetOrCompute($"{interactions[i].AntennaCall}"),
+                                                                    tooltip: MyStringId.GetOrCompute($"{interactions[i].AntennaCallTooltip}"),
+                                                                    userData: i);
 
                         content.Add(item);
-
-                        MyTerminalControlListBoxItem testItem; // predeclare for C# 6
-                        if (_comboSelection.TryGetValue(b.EntityId, out testItem) &&
-                            Equals(testItem.UserData, item.UserData))
+                        MyTerminalControlListBoxItem testItem;
+                        if (_comboSelection.TryGetValue(b.EntityId, out testItem) && testItem.UserData == item.UserData)
                         {
-                            preSelect.Add(item);
+                            preSelect.Add(item); // if this is the selected item, preselect it
                         }
+                            
                     }
                 };
-
                 c.ItemSelected = (b, selected) =>
                 {
                     _comboSelection[b.EntityId] = selected.First();
 
-                    // Force refresh toolbar display
+                    // Update the show in toolbar config because we don't have better ways...
                     b.ShowInToolbarConfig ^= true;
                     b.ShowInToolbarConfig ^= true;
-                }; 
-
+                };
 
                 MyAPIGateway.TerminalControls.AddControl<IMyRadioAntenna>(c);
             }
@@ -145,38 +135,40 @@ namespace PEPCO
             }
         }
 
-        static void CreateActions(
-        IMyModContext context,
-        Dictionary<string, MesInteraction> interactions)
+        static void CreateActions(IMyModContext context, List<MesInteraction> interactions)
         {
             if (interactions == null || interactions.Count == 0)
                 return;
 
-            int index = 0;
-            foreach (var kvp in interactions) // kvp.Key = InteractionId, kvp.Value = MesInteraction
+            for (int i = 0, n = interactions.Count; i < n; i++)
             {
-                var item = kvp.Value;
-                string interactionId = kvp.Key;
+                var item = interactions[i];
 
-                var a = MyAPIGateway.TerminalControls
-                    .CreateAction<IMyRadioAntenna>(IdPrefix + "Interaction_" + interactionId);
+                // yes, there's only one type of action
+                
+                int index = i;
+                var a = MyAPIGateway.TerminalControls.CreateAction<IMyRadioAntenna>(IdPrefix +"InteractionIndex" +i);
 
                 a.Name = new StringBuilder(item.AntennaCall);
+
+                // If the action is visible for grouped blocks (as long as they all have this action).
                 a.ValidForGroups = false;
+
+                // The icon shown in the list and top-right of the block icon in toolbar.
                 a.Icon = @"Textures\GUI\Icons\Actions\SendSignal.dds";
 
-                // Action trigger
-                int capturedIndex = index; // needed to avoid closure issues
-                a.Action = b =>
+                // The action is called when the user clicks the button in the toolbar.
+                a.Action = (b) =>
                 {
                     var logic = b.GameLogic.GetAs<MESAntenna_Logic>();
                     if (logic != null)
                     {
-                        logic.CallMESInteraction(interactionId);
+                        // Call the method in the gamelogic with the selected call
+                        logic.CallMESInteraction(index.ToString());
                     }
                 };
 
-                // Status text in toolbar
+                // The status of the action, shown in toolbar icon text and can also be read by mods or PBs.
                 a.Writer = (b, sb) =>
                 {
                     var lines = item.AntennaCall
@@ -191,14 +183,12 @@ namespace PEPCO
                     }
                 };
 
+                // Need to amend the custom visible condition to the action based on available list in AnteannaLogic.cs
                 a.Enabled = CustomVisibleCondition;
 
                 MyAPIGateway.TerminalControls.AddAction<IMyRadioAntenna>(a);
-
-                index++;
             }
         }
-
 
     }
 }
